@@ -1,4 +1,5 @@
 #include "global_body_planner/gbpl.h"
+#include <limits>
 
 using namespace planning_utils;
 
@@ -146,6 +147,40 @@ void GBPL::extractPath(PlannerClass &Ta, PlannerClass &Tb,
   postProcessPath(state_sequence, action_sequence, planner_config);
 }
 
+void GBPL::extractPath(PlannerClass &Ta, PlannerClass &Tb,
+                       std::vector<State> &state_sequence,
+                       std::vector<Action> &action_sequence,
+                       const PlannerConfig &planner_config,
+                       int ta_vertex_index,
+                       int tb_vertex_index) {
+    // Get both paths, remove the back of path_b and reverse it to align with path
+    // a
+    std::vector<int> path_a = pathFromStart(Ta, ta_vertex_index - 1);
+    std::vector<int> path_b = pathFromStart(Tb, tb_vertex_index - 1);
+
+    std::reverse(path_b.begin(), path_b.end());
+    std::vector<Action> action_sequence_b = getActionSequenceReverse(Tb, path_b);
+    for (int i = 0; i < action_sequence_b.size(); i++) {
+        flipDirection(action_sequence_b[i]);
+    }
+    path_b.erase(path_b.begin());
+
+    state_sequence = getStateSequence(Ta, path_a);
+    std::vector<State> state_sequence_b = getStateSequence(Tb, path_b);
+    for (int i = 0; i < state_sequence_b.size(); i++) {
+        flipDirection(state_sequence_b[i]);
+    }
+    state_sequence.insert(state_sequence.end(), state_sequence_b.begin(),
+                          state_sequence_b.end());
+
+    action_sequence = getActionSequence(Ta, path_a);
+    action_sequence.insert(action_sequence.end(), action_sequence_b.begin(),
+                           action_sequence_b.end());
+
+    // Post process to reduce the path length
+    postProcessPath(state_sequence, action_sequence, planner_config);
+}
+
 void GBPL::extractClosestPath(PlannerClass &Ta, const State &s_goal,
                               std::vector<State> &state_sequence,
                               std::vector<Action> &action_sequence,
@@ -179,6 +214,10 @@ int GBPL::findPlan(const PlannerConfig &planner_config, State s_start,
   auto t_start_current_solve = std::chrono::steady_clock::now();
   int result;
 
+  double best_path_length_ = std::numeric_limits<double>::max();
+  int best_Ta_num_vertices;
+  int best_Tb_num_vertices;
+
   PlannerClass Ta(FORWARD, planner_config);
   PlannerClass Tb(REVERSE, planner_config);
   Ta.init(s_start);
@@ -196,89 +235,117 @@ int GBPL::findPlan(const PlannerConfig &planner_config, State s_start,
                anytime_horizon_init);
 
   while (ros::ok()) {
-    auto t_current = std::chrono::steady_clock::now();
-    std::chrono::duration<double> total_elapsed =
-        t_current - t_start_total_solve;
-    std::chrono::duration<double> current_elapsed =
-        t_current - t_start_current_solve;
+      auto t_current = std::chrono::steady_clock::now();
+      std::chrono::duration<double> total_elapsed =
+              t_current - t_start_total_solve;
+      std::chrono::duration<double> current_elapsed =
+              t_current - t_start_current_solve;
 
 #ifndef VISUALIZE_TREE
-    if (total_elapsed.count() >= planner_config.max_planning_time) {
-      elapsed_to_first_ = total_elapsed;
-      num_vertices_ = (Ta.getNumVertices() + Tb.getNumVertices());
-      break;
-    }
-
-    if (current_elapsed.count() >= anytime_horizon) {
-      auto t_start_current_solve = std::chrono::steady_clock::now();
-      anytime_horizon = anytime_horizon * horizon_expansion_factor;
-      Ta = PlannerClass(FORWARD, planner_config);
-      Tb = PlannerClass(REVERSE, planner_config);
-      tree_viz_msg_.markers.clear();
-      Ta.init(s_start);
-      Tb.init(s_goal);
-      continue;
-    }
-#endif
-
-    // Generate random s
-    State s_rand = Ta.randomState(planner_config);
-
-    if (isValidState(s_rand, planner_config, LEAP_STANCE)) {
-      if (extend(Ta, s_rand, planner_config, FORWARD, tree_pub) != TRAPPED) {
-        State s_new = Ta.getVertex(Ta.getNumVertices() - 1);
-
-#ifdef VISUALIZE_TREE
-        Action a_new = Ta.getAction(Ta.getNumVertices() - 1);
-        State s_parent =
-            Ta.getVertex(Ta.getPredecessor(Ta.getNumVertices() - 1));
-        publishStateActionPair(s_parent, a_new, s_rand, planner_config,
-                               tree_viz_msg_, tree_pub);
-#endif
-
-        if (connect(Tb, s_new, planner_config, FORWARD, tree_pub) == REACHED) {
-          goal_found = true;
-
-          auto t_end = std::chrono::steady_clock::now();
-          elapsed_to_first_ = t_end - t_start_total_solve;
-          path_length_ = Ta.getGValue(Ta.getNumVertices() - 1) +
-                         Tb.getGValue(Tb.getNumVertices() - 1);
+      if (total_elapsed.count() >= planner_config.max_planning_time) {
+          elapsed_to_first_ = total_elapsed;
+          num_vertices_ = (Ta.getNumVertices() + Tb.getNumVertices());
           break;
-        }
       }
-    }
 
-    s_rand = Tb.randomState(planner_config);
-
-    if (isValidState(s_rand, planner_config, LEAP_STANCE)) {
-      if (extend(Tb, s_rand, planner_config, FORWARD, tree_pub) != TRAPPED) {
-        State s_new = Tb.getVertex(Tb.getNumVertices() - 1);
-
-#ifdef VISUALIZE_TREE
-        Action a_new = Tb.getAction(Tb.getNumVertices() - 1);
-        State s_parent =
-            Tb.getVertex(Tb.getPredecessor(Tb.getNumVertices() - 1));
-        publishStateActionPair(s_parent, a_new, s_rand, planner_config,
-                               tree_viz_msg_, tree_pub);
+      if (current_elapsed.count() >= anytime_horizon) {
+          auto t_start_current_solve = std::chrono::steady_clock::now();
+          anytime_horizon = anytime_horizon * horizon_expansion_factor;
+          Ta = PlannerClass(FORWARD, planner_config);
+          Tb = PlannerClass(REVERSE, planner_config);
+          tree_viz_msg_.markers.clear();
+          Ta.init(s_start);
+          Tb.init(s_goal);
+          continue;
+      }
 #endif
+      // TODO Add a better criteria for the number of repeats
+      for (int rep = 0; rep < 4; ++rep) {
+          // Generate random s
+          State s_rand;
+          if (goal_found) {
+              s_rand = Ta.randomState(planner_config, best_path_length_, s_start, s_goal);
+          } else {
+              s_rand = Ta.randomState(planner_config);
+          }
 
-        if (connect(Ta, s_new, planner_config, FORWARD, tree_pub) == REACHED) {
-          goal_found = true;
+          if (isValidState(s_rand, planner_config, LEAP_STANCE)) {
+              if (extend(Ta, s_rand, planner_config, FORWARD, tree_pub) != TRAPPED) {
+                  State s_new = Ta.getVertex(Ta.getNumVertices() - 1);
 
-          auto t_end = std::chrono::steady_clock::now();
-          elapsed_to_first_ = t_end - t_start_total_solve;
-          path_length_ = Ta.getGValue(Ta.getNumVertices() - 1) +
-                         Tb.getGValue(Tb.getNumVertices() - 1);
-          break;
-        }
-      }
-    }
+    #ifdef VISUALIZE_TREE
+                  Action a_new = Ta.getAction(Ta.getNumVertices() - 1);
+                  State s_parent =
+                      Ta.getVertex(Ta.getPredecessor(Ta.getNumVertices() - 1));
+                  publishStateActionPair(s_parent, a_new, s_rand, planner_config,
+                                         tree_viz_msg_, tree_pub);
+    #endif
+
+                  if (connect(Tb, s_new, planner_config, FORWARD, tree_pub) == REACHED) {
+                      goal_found = true;
+
+                      auto t_end = std::chrono::steady_clock::now();
+                      elapsed_to_first_ = t_end - t_start_total_solve;
+                      path_length_ = Ta.getGValue(Ta.getNumVertices() - 1) +
+                                     Tb.getGValue(Tb.getNumVertices() - 1);
+
+                      if (best_path_length_ > path_length_) {
+                          best_path_length_ = path_length_;
+                          best_Ta_num_vertices = Ta.getNumVertices();
+                          best_Tb_num_vertices = Tb.getNumVertices();
+                      }
+
+//                      break;
+                  }
+              }
+          }
+
+          if (goal_found) {
+              s_rand = Ta.randomState(planner_config, best_path_length_, s_start, s_goal);
+          } else {
+              s_rand = Tb.randomState(planner_config);
+          }
+
+          if (isValidState(s_rand, planner_config, LEAP_STANCE)) {
+              if (extend(Tb, s_rand, planner_config, FORWARD, tree_pub) != TRAPPED) {
+                  State s_new = Tb.getVertex(Tb.getNumVertices() - 1);
+
+    #ifdef VISUALIZE_TREE
+                  Action a_new = Tb.getAction(Tb.getNumVertices() - 1);
+                  State s_parent =
+                      Tb.getVertex(Tb.getPredecessor(Tb.getNumVertices() - 1));
+                  publishStateActionPair(s_parent, a_new, s_rand, planner_config,
+                                         tree_viz_msg_, tree_pub);
+    #endif
+
+                  if (connect(Ta, s_new, planner_config, FORWARD, tree_pub) == REACHED) {
+                      goal_found = true;
+
+                      auto t_end = std::chrono::steady_clock::now();
+                      elapsed_to_first_ = t_end - t_start_total_solve;
+
+                      path_length_ = Ta.getGValue(Ta.getNumVertices() - 1) +
+                                     Tb.getGValue(Tb.getNumVertices() - 1);
+
+                      if (best_path_length_ > path_length_) {
+                          best_path_length_ = path_length_;
+                          best_Ta_num_vertices = Ta.getNumVertices();
+                          best_Tb_num_vertices = Tb.getNumVertices();
+                      }
+    //          break;
+
+                  }
+              }
+          }
+
+      } // repeat search for path
+
   }
 
-  num_vertices_ = (Ta.getNumVertices() + Tb.getNumVertices());
+    num_vertices_ = (best_Ta_num_vertices + best_Tb_num_vertices);
 
   if (goal_found == true) {
-    extractPath(Ta, Tb, state_sequence, action_sequence, planner_config);
+    extractPath(Ta, Tb, state_sequence, action_sequence, planner_config, best_Ta_num_vertices, best_Tb_num_vertices);
     result = VALID;
   } else {
     extractClosestPath(Ta, s_goal, state_sequence, action_sequence,

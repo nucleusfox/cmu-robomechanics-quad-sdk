@@ -16,6 +16,14 @@ typedef std::pair<double, int> Distance;
 */
 class PlannerClass : public GraphClass {
  public:
+    // Ellipsoidal heuristic
+    double centre_x = 0.0;
+    double centre_y = 0.0;
+    double dist = 0.0;
+    double cos_phi = 0.0;
+    double sin_phi = 0.0;
+
+
   /**
    * @brief Constructor for PlannerClass
    * @param[in] direction Direction of tree expansion
@@ -31,6 +39,17 @@ class PlannerClass : public GraphClass {
    * @return Newly generated random state
    */
   State randomState(const PlannerConfig &planner_config);
+
+    /**
+   * @brief Generate a random state by sampling from within the bounds of the
+   * terrain with ellipsoidal heuristic applied
+   * @param[in] terrain Height map of the terrain
+   * @param[in] max_cost Length of a path found prior
+   * @param[in] s_start Start state
+   * @param[in] s_goal Goal state
+   * @return Newly generated random state
+   */
+    State randomState(const PlannerConfig &planner_config, double max_cost, State s_start, State s_goal);
 
   /**
    * @brief Get the closest N vertices to the specified state by Euclidean

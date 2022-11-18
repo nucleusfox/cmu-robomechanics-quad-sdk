@@ -69,6 +69,24 @@ class GBPL : public RRT {
                    std::vector<Action> &action_sequence,
                    const PlannerConfig &planner_config);
 
+    /**
+   * @brief Post process the path by removing extraneous states that can be
+   * bypassed
+   * @param[in] Ta The planning tree originating from the start state
+   * @param[in] Tb The planning tree originating from the end state
+   * @param[out] state_sequence The sequence of states in the path
+   * @param[out] action_sequence The sequence of actions in th  e path
+   * @param[in] planner_config Configuration parameters
+   * @param[in] ta_vertex_index The index of vertex to consider as last in the tree from the start state
+   * @param[in] tb_vertex_index The index of vertex to consider as last in the tree from the end state
+   */
+    void extractPath(PlannerClass &Ta, PlannerClass &Tb,
+                     std::vector<State> &state_sequence,
+                     std::vector<Action> &action_sequence,
+                     const PlannerConfig &planner_config,
+                     int ta_vertex_index,
+                     int tb_vertex_index);
+
   /**
    * @brief Post process the path by removing extraneous states that can be
    * bypassed
